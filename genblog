@@ -1,0 +1,476 @@
+#!/usr/bin/env python
+# -*- encoding: utf-8 -*-
+
+import string, os, sys, time, datetime
+import ConfigParser
+import shutil
+import markdown2
+
+#------ GLOBAL VARS ------------
+
+# %a %b %d %Y
+# %d/%m/%Y
+
+CONFIG_FILE = "config.ini"
+CONFIG_FILE_CONTENT = '''[defaults]
+author_name = abhiwin
+author_email = abhiwin@gmail.com
+site_title = My Blog Site
+site_description = My Blog Site Description
+date_format = %a %b %d %Y
+date_format_short = %d/%m/%Y
+stylesheet = style.css
+
+[sections]
+site_header = header.md
+site_footer = footer.md
+post_header = post_header.md
+post_footer = post_footer.md
+page_header = page_header.md
+page_footer = page_footer.md
+'''
+
+SITE_CSS_CONTENT = '''html {
+	font-size: 1.125em;
+}
+
+body {
+	background-color: rgb(250, 250, 250);
+	color: rgba(0, 0, 0, 0.87);
+	font-family: Roboto, sans-serif;
+	font-weight: 400;
+	line-height: 1.5;
+	text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4 {
+	font-weight: 500;
+}
+
+h1 {
+	font-size: 1.602em;
+}
+
+h2 {
+	font-size: 1.424em;
+}
+
+h3 {
+	font-size: 1.266em;
+}
+
+h4 {
+	font-size: 1.125em;
+}
+
+#page {
+	margin: 2.5em auto;
+	max-width: 35em;
+	padding: 0 0.5rem;
+}
+
+a {
+	text-decoration: none;
+	color: rgb(21, 101, 192);
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:visited {
+	color: rgb(21, 101, 192);
+}
+
+nav ul {
+	list-style-type: none;
+	padding: 0;
+}
+
+.date {
+	color: rgba(0, 0, 0, 0.54);
+	font-size: 0.889em;
+}
+
+pre {
+	background-color: #f5f5f5;
+}
+
+code {
+	font-family: 'Roboto Mono', monospace;
+	font-size: 0.889em;
+}
+'''
+
+class Config(object):
+	def __init__(self, filename=""):
+		self.config = {}
+		self.configparser = ConfigParser.ConfigParser()
+		self.site_title = ''
+		self.site_header = ''
+		self.stylesheet = ''
+		if filename:
+			self.readFile(filename)
+
+	def readFile(self, configFileName):
+		self.configparser.read(configFileName)
+
+	def getSiteTitle(self):
+		if self.site_title:
+			return self.site_title
+
+		self.site_title = self.get('site_title') or "My Blog Site"
+		return self.site_title
+
+	def getSectionFile(self, section):
+		return self.get(section, 'sections')
+
+	def get(self, name, section='defaults'):
+		try:
+			# val = self.configparser.options('defaults', name)
+			val = self.configparser.get(section, name)
+			return val
+		except:
+			return ''
+
+config = Config()
+
+POSTS_INPUT_DIR = "contents/posts"
+SECTIONS_INPUT_DIR = "sections"
+PAGES_INPUT_DIR = "contents/pages"
+STATIC_INPUT_DIR = "static"
+
+OUT_DIR_ROOT = "public"
+POSTS_OUTPUT_DIR = os.path.join(OUT_DIR_ROOT, "posts")
+PAGES_OUTPUT_DIR = os.path.join(OUT_DIR_ROOT, "pages")
+STATIC_OUTPUT_DIR = os.path.join(OUT_DIR_ROOT, "static")
+
+ALL_POSTS_FILE_NAME = "all_posts.html"
+ALL_POSTS_FILE_PATH = os.path.join(OUT_DIR_ROOT, ALL_POSTS_FILE_NAME)
+
+HEADER_FILE_NAME = "header.md"
+HEADER_FILE_CONTENT = """# %(title)s
+
+Description
+""" % dict(title= config.getSiteTitle())
+
+INITIAL_POST_NAME = "initial_post.md"
+INITIAL_POST_CONTENT = """# Initial post
+
+This is sample *initial* post
+"""
+
+INITIAL_PAGE_NAME = "about.md"
+INITIAL_PAGE_CONTENT = """# About
+
+This is sample *ABOUT ME* page
+"""
+
+#------- Functions ---------------
+
+def getFileCreationDate(filename):
+    t = datetime.datetime.fromtimestamp(os.stat(filename).st_ctime)
+    return (t.strftime(config.get('date_format')), t.strftime(config.get('date_format_short')))
+
+def createDirIfNotExist(d):
+	if not os.path.exists(d):
+		os.makedirs(d)
+
+def getLayout(title):
+	return """<!DOCTYPE html>
+	<html>
+		<head>
+			<meta charset='utf-8'>
+			<meta name='viewport' content='width=device-width, initial-scale=1'>
+			<title> %(title)s </title>
+			<style>
+				@import url(http://fonts.googleapis.com/css?family=Roboto:400,500,700,400italic,500italic,700italic);
+				@import url(http://fonts.googleapis.com/css?family=Roboto+Mono:400,700);
+			</style>
+			<link rel="stylesheet" type="text/css" href="/static/%(stylesheet)s">
+		</head>
+		<body>
+			<div id='page'>
+			""" % dict(
+				title=title,
+				stylesheet=config.get('stylesheet'),
+				)
+
+def getPostMeta(post):
+	post_meta = {}
+
+	post_content_lines = open(os.path.join(POSTS_INPUT_DIR, post), "r").readlines()
+
+	for i, line in enumerate(post_content_lines):
+		if line.startswith('#~'):
+			var = line.split(":")[0][2:].strip().lower()
+			value = "".join(line.split(":")[1:]).strip()
+			post_meta[var] = value
+		else:
+			break
+	
+	if not 'author_name' in post_meta:
+		post_meta['author_name'] = config.get('author_name')
+
+	if not 'author_email' in post_meta:
+		post_meta['author_email'] = config.get('author_email')
+
+	if not 'date' in post_meta:
+		post_meta['date'], post_meta['date_short'] = getFileCreationDate(os.path.join(POSTS_INPUT_DIR, post))
+	else:
+		post_meta['date_short'] = post_meta['date']
+
+	if not 'title' in post_meta:
+		title = string.capwords(post.replace(".md", "").replace("_", " "))
+		if post_content_lines[0].startswith("#"):
+			title = post_content_lines[0].replace("#", "").replace("_", " ").strip()
+			i = i + 1
+		post_meta['title'] = title
+
+	if not 'file' in post_meta:
+		html_file = post_meta['title'].lower().replace(" ", "_").replace("'", "").replace("\"", "") + ".html"
+		post_meta['file'] = html_file
+
+	post_meta['markdown'] = markdown2.markdown( "".join(post_content_lines[i:]) )
+	return post_meta
+
+def getPageMeta(page):
+	page_meta = {}
+
+	page_content_lines = open(os.path.join(PAGES_INPUT_DIR, page), "r").readlines()
+
+	for i, line in enumerate(page_content_lines):
+		if line.startswith('#~'):
+			var = line.split(":")[0][2:].strip().lower()
+			value = "".join(line.split(":")[1:]).strip()
+			page_meta[var] = value
+		else:
+			break
+	
+	if not 'title' in page_meta:
+		title = string.capwords(page.replace(".md", "").replace("_", " "))
+		if page_content_lines[0].startswith("#"):
+			title = page_content_lines[0].replace("#", "").replace("_", " ").strip()
+			i = i + 1
+		page_meta['title'] = title
+
+	if not 'file' in page_meta:
+		html_file = page_meta['title'].lower().replace(" ", "_").replace("'", "").replace("\"", "") + ".html"
+		page_meta['file'] = html_file
+
+	page_meta['markdown'] = markdown2.markdown( "".join(page_content_lines[i:]) )
+	return page_meta
+
+def copyStatic():
+	shutil.copytree(STATIC_INPUT_DIR, STATIC_OUTPUT_DIR)
+
+def createFilesAndDirs():
+	createDirIfNotExist(POSTS_INPUT_DIR)
+	createDirIfNotExist(SECTIONS_INPUT_DIR)
+	createDirIfNotExist(PAGES_INPUT_DIR)
+	createDirIfNotExist(STATIC_INPUT_DIR)
+
+	if not os.path.exists(CONFIG_FILE):
+		open(CONFIG_FILE, "w").write(CONFIG_FILE_CONTENT)
+
+	if not os.path.exists(os.path.join(SECTIONS_INPUT_DIR, HEADER_FILE_NAME)):
+		open(os.path.join(SECTIONS_INPUT_DIR, HEADER_FILE_NAME), "w").write(HEADER_FILE_CONTENT)
+
+	if not os.path.exists(os.path.join(POSTS_INPUT_DIR, INITIAL_POST_NAME)):
+		open(os.path.join(POSTS_INPUT_DIR, INITIAL_POST_NAME), "w").write(INITIAL_POST_CONTENT)
+
+	if not os.path.exists(os.path.join(PAGES_INPUT_DIR, INITIAL_PAGE_NAME)):
+		open(os.path.join(PAGES_INPUT_DIR, INITIAL_PAGE_NAME), "w").write(INITIAL_PAGE_CONTENT)
+
+	if not os.path.exists(os.path.join(STATIC_INPUT_DIR, "style.css")):
+		open(os.path.join(STATIC_INPUT_DIR, "style.css"), "w").write(SITE_CSS_CONTENT)
+
+def writePost(post_meta):
+	b = []
+
+	b.append( getLayout("%s - %s" % (post_meta['title'], config.getSiteTitle() )) ) 
+	b.append('''
+<p><a href="/index.html">Back</a></p>
+<h1>%(title)s</h1>
+<p class="date">%(author_name)s &lt%(author_email)s&gt, %(date)s</p>
+<hr/>
+%(markdown)s
+<p><a href="/index.html">Back</a></p>
+</div></body></html>
+''' % dict(
+			date = post_meta['date'],
+			markdown = post_meta['markdown'],
+			title = post_meta['title'],
+			author_name = post_meta['author_name'],
+			author_email = post_meta['author_email'],
+			)
+		)
+
+	open(os.path.join(POSTS_OUTPUT_DIR, post_meta['file']), "w").write("".join(b))
+
+def writePage(page_meta):
+	b = []
+	
+	b.append( getLayout("%s - %s" % (page_meta['title'], config.getSiteTitle() )) ) 
+
+	b.append('''
+<p><a href="/index.html">Back</a></p>
+<h1>%(title)s</h1>
+<hr/>
+%(markdown)s
+<p><a href="/index.html">Back</a></p>
+''' % dict(
+			markdown = page_meta['markdown'],
+			title = page_meta['title'],
+			)
+		)
+	open(os.path.join(PAGES_OUTPUT_DIR, page_meta['file']), "w").write("".join(b))
+
+def getPostSection():
+	b = ["<!-- POST SECTION START !-->"]
+
+	b.append("<h2>Posts</h2><nav><ul>")
+
+	posts = os.listdir(POSTS_INPUT_DIR)
+	posts.sort(key=lambda x: os.stat(os.path.join(POSTS_INPUT_DIR, x)).st_ctime, reverse=True)
+	for i, post in enumerate(posts):
+		if not post.lower().endswith(".md"):
+			del posts[i]
+			continue
+		post_meta = getPostMeta(post)
+
+		post_section = '''
+<li>
+<span class="date">%(post_date_short)s></span>&nbsp;&nbsp;
+<a href="/posts/%(post_file)s"> %(post_title)s</a>
+</li>
+			''' % dict(
+				post_date_short = post_meta['date_short'], 
+				post_file = post_meta['file'], 
+				post_title = post_meta['title'],
+				)
+		b.append(post_section)
+		open(ALL_POSTS_FILE_PATH, "a").write( post_section )
+		writePost(post_meta)
+
+	
+	b.append('''
+</ul></nav>
+<p>
+<a href="/%(all_post_file)s">All posts</a>
+</p>''' % dict(all_post_file = ALL_POSTS_FILE_NAME))
+
+
+	b.append("<!-- POST SECTION END !-->")
+
+	print "Total Posts: %d" % (len(posts))
+	return "\n".join(b)
+
+def getPageSection():
+	b = []
+	b.append("<!-- PAGES SECTION START !-->")
+
+	b.append("<h2>Pages</h2><nav><ul>")
+
+	pages = os.listdir(PAGES_INPUT_DIR)
+	for page in pages:
+		page_meta = getPageMeta(page)
+
+		b.append('''
+<li>
+<a href="/pages/%(html_file)s">
+%(title)s
+</a>
+</li>
+''' % dict(
+				html_file = page_meta['file'],
+				title = page_meta['title'],
+				)
+			)
+
+		writePage(page_meta)
+
+	b.append("</ul></nav>")
+
+	b.append("<!-- PAGES SECTION END !-->")
+	print "Total Pages: %d" % (len(pages))
+	return "\n".join(b)
+
+def writeALLPostsHeader():
+	b = []
+	b.append(getLayout("All Posts - ") + config.getSiteTitle())
+	b.append('<p><a href="/index.html">Back</a></p>')
+	b.append('<h1>All posts</h1>')
+	b.append('<nav><ul>')
+
+	open(ALL_POSTS_FILE_PATH, "w+").write("\n".join(b))
+
+	pass
+
+def writeALLPostsFooter():
+	b = []
+	b.append('</ul></nav>')
+	b.append('<p><a href="/index.html">Back</a></p>')
+	b.append('</div></body></html>')
+
+	open(ALL_POSTS_FILE_PATH, "a").write("\n".join(b))
+	pass
+
+
+def getSectionContent(sectionFileName):
+	contents = open(os.path.join(SECTIONS_INPUT_DIR, sectionFileName), "r").readlines()
+
+	for i, l in enumerate(contents):
+		if l.strip() and (l.find('{{') != -1):
+			var = l.split('{{')[1].split('}}')[0].strip()
+			val = config.get(var)
+			if val:
+				contents[i] = contents[i].replace("{{ %s }}" % var, val)
+
+	return markdown2.markdown( "".join(contents) ) 
+
+def getContent(section):
+	fname = config.getSectionFile(section)
+
+	if fname and os.path.exists( os.path.join(SECTIONS_INPUT_DIR, fname) ): 
+		b = getSectionContent(fname)
+		return b
+
+	return ''
+
+def generateSite():
+	print "Generating Site..."
+	shutil.rmtree(OUT_DIR_ROOT, ignore_errors=True)
+	createDirIfNotExist(POSTS_OUTPUT_DIR)
+	createDirIfNotExist(PAGES_OUTPUT_DIR)
+
+	print "Copying static assets..."
+	copyStatic()
+
+	b = []
+	b.append( getLayout(config.getSiteTitle()) )
+	b.append( getContent('site_header') )
+
+	writeALLPostsHeader()
+
+	print "Creating Posts..."
+	b.append( getPostSection() )
+
+	print "Creating Pages..."
+	b.append( getPageSection() )
+
+	writeALLPostsFooter()
+
+	b.append( getContent('site_footer') ) 
+
+	b.append( "</div></body></html>" )
+
+	open(os.path.join(OUT_DIR_ROOT, "index.html"), "w").write("\n".join(b))
+
+if __name__ == "__main__":
+
+	if len(sys.argv) > 1 and sys.argv[1] == "init":
+		createFilesAndDirs()
+	else:
+		config.readFile(CONFIG_FILE)
+		generateSite()
