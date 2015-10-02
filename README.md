@@ -1,0 +1,2 @@
+# stablog
+Static Blog Generator
