@@ -453,10 +453,10 @@ def generateSite():
 
 	writeALLPostsHeader()
 
-	print "Creating Posts..."
+	print "Creating default post..."
 	b.append( getPostSection() )
 
-	print "Creating Pages..."
+	print "Creating default page..."
 	b.append( getPageSection() )
 
 	writeALLPostsFooter()
