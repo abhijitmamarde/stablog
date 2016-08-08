@@ -17,6 +17,7 @@ Ok there are few steps more :)
 ### TODO
 
 * add tests
+* integrate with CI
 * add more configuration options
 * provide simple way for supporting themes
 
